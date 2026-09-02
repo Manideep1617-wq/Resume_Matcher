@@ -83,7 +83,7 @@ st.markdown("""
         color: #F8FAFC !important;
     }
 </style>
-""", unsafe_allow_html=unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 # Initialize Session States
 if "resume_data" not in st.session_state:
