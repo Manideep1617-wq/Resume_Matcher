@@ -39,6 +39,11 @@ st.markdown("""
     .job-co { color:#38BDF8; font-weight:600; font-size:.9rem; margin-top:2px; }
     .score-badge { background:linear-gradient(135deg,#059669,#10B981); color:#FFF; padding:6px 14px; border-radius:20px; font-weight:800; font-size:1rem; white-space:nowrap; }
     .src-badge { background:#1E293B; color:#94A3B8; padding:3px 9px; border-radius:10px; font-size:.75rem; font-weight:600; }
+    .src-internshala { background:rgba(0,183,122,.2); color:#00B77A; border:1px solid rgba(0,183,122,.4); padding:3px 9px; border-radius:10px; font-size:.75rem; font-weight:700; }
+    .src-linkedin    { background:rgba(10,102,194,.2); color:#60A5FA; border:1px solid rgba(10,102,194,.4); padding:3px 9px; border-radius:10px; font-size:.75rem; font-weight:700; }
+    .src-indeed      { background:rgba(42,92,169,.2); color:#93C5FD; border:1px solid rgba(42,92,169,.4); padding:3px 9px; border-radius:10px; font-size:.75rem; font-weight:700; }
+    .src-unstop      { background:rgba(124,58,237,.2); color:#C4B5FD; border:1px solid rgba(124,58,237,.4); padding:3px 9px; border-radius:10px; font-size:.75rem; font-weight:700; }
+    .src-remotive    { background:rgba(245,158,11,.2); color:#FCD34D; border:1px solid rgba(245,158,11,.4); padding:3px 9px; border-radius:10px; font-size:.75rem; font-weight:700; }
 
     .chip-ok   { display:inline-block; background:rgba(16,185,129,.15); color:#34D399; border:1px solid rgba(16,185,129,.3); padding:4px 10px; margin:3px; border-radius:16px; font-size:.8rem; font-weight:600; }
     .chip-no   { display:inline-block; background:rgba(239,68,68,.15); color:#F87171; border:1px solid rgba(239,68,68,.3); padding:4px 10px; margin:3px; border-radius:16px; font-size:.8rem; font-weight:600; }
@@ -76,11 +81,11 @@ def do_parse_and_search(raw_text: str):
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.image("https://img.icons8.com/isometric/96/artificial-intelligence.png", width=55)
-    st.markdown("### **AI Job Matcher**")
+    st.markdown("### **AI Job Matcher 🇮🇳**")
     st.caption("Resume-aware Indian job/internship search")
     st.markdown("---")
     st.markdown("⚡ **Quick Demo Sandbox**")
-    st.caption("Load a sample candidate profile and auto-search jobs:")
+    st.caption("Load a sample candidate profile and auto-search India jobs:")
     if st.button("🚀 Load Sample Resume", use_container_width=True):
         sample = """
 HARSHITA SHARMA  — Generative AI & ML Intern Candidate
@@ -102,8 +107,41 @@ EDUCATION: B.Tech CSE (2022-2026) | GPA 8.8 / 10.0
         with st.spinner("Parsing resume and searching India jobs…"):
             do_parse_and_search(sample)
         st.toast("Loaded! Jobs auto-fetched in Tab 2.", icon="🎉")
+
+    st.markdown("---")
+    st.markdown("🔎 **Search Directly on Indian Platforms**")
+    st.caption("Click a platform to search for jobs there:")
+
+    # Dynamically build search links based on parsed resume
+    _skills = ""
+    _query = "python intern"
+    if st.session_state.resume_data:
+        _top = st.session_state.resume_data.get("technical_skills", [])[:2]
+        _lvl = st.session_state.resume_data.get("experience_level", "")
+        _intern = "intern " if any(w in _lvl.lower() for w in ["intern", "fresher"]) else ""
+        _query = _intern + " ".join(_top[:2]) if _top else "python developer intern"
+
+    from urllib.parse import quote as _q
+
+    st.link_button("🎓 Internshala",
+                   f"https://internshala.com/internships/{_q(_query)}-internship/",
+                   use_container_width=True)
+    st.link_button("💼 LinkedIn India",
+                   f"https://www.linkedin.com/jobs/search/?keywords={_q(_query)}&location=India&f_JT=I",
+                   use_container_width=True)
+    st.link_button("🔍 Indeed India",
+                   f"https://in.indeed.com/jobs?q={_q(_query)}&l=India",
+                   use_container_width=True)
+    st.link_button("🚀 Unstop",
+                   f"https://unstop.com/jobs?search={_q(_query)}&oppType=jobs",
+                   use_container_width=True)
+    st.link_button("🌐 Naukri.com",
+                   f"https://www.naukri.com/{_q(_query.replace(' ', '-'))}-jobs-in-india",
+                   use_container_width=True)
+
     st.markdown("---")
     st.caption("🏆 Generative AI Build Sprint MVP")
+
 
 
 # ── Header ─────────────────────────────────────────────────────────────────────
@@ -227,63 +265,112 @@ with tab2:
                     st.session_state.url_scrape_msg = None
                     st.success("Target job set! Go to Tab 3 to run match analysis.")
 
-        # ── Job Cards ──────────────────────────────────────────────────────────
+        # ── Source Summary + Filter ────────────────────────────────────────────
         results = st.session_state.job_results
         if results:
             selected_id = st.session_state.selected_job.get("id") if st.session_state.selected_job else None
-            st.markdown(f"#### Found **{len(results)}** India-Eligible Opportunities Matched to Your Resume")
 
-            for idx, j in enumerate(results):
+            # Source breakdown
+            from collections import Counter
+            source_counts = Counter(j["source"] for j in results)
+            src_html = " &nbsp; ".join(
+                f'<span class="src-badge">{"🎓" if "Internshala" in s else "💼" if "LinkedIn" in s else "🔍" if "Indeed" in s else "🚀" if "Unstop" in s else "🌐"} {s}: <b>{c}</b></span>'
+                for s, c in source_counts.items()
+            )
+            st.markdown(
+                f'<div style="margin-bottom:12px;">'
+                f'<b style="color:#F8FAFC;">Found {len(results)} India-Eligible Opportunities</b><br><br>'
+                f'{src_html}</div>',
+                unsafe_allow_html=True
+            )
+
+            # Source filter
+            all_sources = sorted(source_counts.keys())
+            selected_sources = st.multiselect(
+                "Filter by Platform:", all_sources, default=all_sources,
+                help="Show only jobs from selected platforms"
+            )
+            filtered = [j for j in results if j["source"] in selected_sources] if selected_sources else results
+
+            for idx, j in enumerate(filtered):
                 score = j.get("match_score", 75)
                 app_url = j.get("application_url", "")
-                selected_mark = " ← **Currently Selected**" if j["id"] == selected_id else ""
+                src = j.get("source", "")
+
+                # Source-specific CSS class
+                if "Internshala" in src:
+                    src_cls = "src-internshala"
+                elif "LinkedIn" in src:
+                    src_cls = "src-linkedin"
+                elif "Indeed" in src:
+                    src_cls = "src-indeed"
+                elif "Unstop" in src:
+                    src_cls = "src-unstop"
+                else:
+                    src_cls = "src-remotive"
+
+                # Score color
+                score_color = "#059669" if score >= 75 else "#D97706" if score >= 50 else "#DC2626"
 
                 st.markdown(f"""
                 <div class="job-card">
                   <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
-                    <div>
+                    <div style="flex:1;">
                       <div class="job-title-t">{j['title']}</div>
-                      <div class="job-co">🏢 {j['company']} &nbsp;•&nbsp; 📍 {j['location']} &nbsp;
-                        <span class="src-badge">Source: {j['source']}</span>
+                      <div class="job-co">🏢 {j['company']} &nbsp;•&nbsp; 📍 {j['location']}</div>
+                      <div style="margin-top:6px;">
+                        <span class="{src_cls}">{src}</span>
                       </div>
                     </div>
-                    <div class="score-badge">Match: {score}%</div>
+                    <div style="background:{score_color};color:#FFF;padding:6px 14px;border-radius:20px;font-weight:800;font-size:1rem;white-space:nowrap;">
+                      {score}% Match
+                    </div>
                   </div>
-                  <p style="color:#94A3B8;font-size:.9rem;margin:12px 0 8px;">{j['description'][:260]}…</p>
+                  <p style="color:#94A3B8;font-size:.9rem;margin:12px 0 6px;">{(j['description'] or '')[:280]}…</p>
                 </div>
                 """, unsafe_allow_html=True)
 
                 matched = j.get("matching_skills", [])
                 missing = j.get("missing_skills", [])
-                why = j.get("why_matches", "Skills in your resume align with this role.")
+                why = j.get("why_matches", "Your resume skills align with this role.")
                 if matched:
                     st.markdown("✅ " + " ".join(f'<span class="chip-ok">✓ {s}</span>' for s in matched[:6]),
                                 unsafe_allow_html=True)
                 if missing:
                     st.markdown("⚠️ " + " ".join(f'<span class="chip-no">✗ {s}</span>' for s in missing[:4]),
                                 unsafe_allow_html=True)
-                st.caption(f"💡 {why}")
+                if why:
+                    st.caption(f"💡 {why}")
 
                 btn_col1, btn_col2 = st.columns([1, 1])
                 with btn_col1:
                     if is_valid_url(app_url):
-                        st.link_button("Apply Now →", app_url, use_container_width=True, type="primary")
+                        btn_label = (
+                            "Apply on Internshala →" if "Internshala" in src else
+                            "Apply on LinkedIn →"    if "LinkedIn" in src else
+                            "Apply on Indeed →"      if "Indeed" in src else
+                            "Apply on Unstop →"      if "Unstop" in src else
+                            "Apply Now →"
+                        )
+                        st.link_button(btn_label, app_url, use_container_width=True)
                     else:
                         st.caption("Application link unavailable.")
                 with btn_col2:
-                    label = "✅ Selected" if j["id"] == selected_id else "🎯 Select for Analysis"
-                    if st.button(label, key=f"sel_{idx}_{j['id']}", use_container_width=True):
+                    is_sel = j["id"] == selected_id
+                    label = "✅ Selected for Analysis" if is_sel else "🎯 Select for Analysis"
+                    if st.button(label, key=f"sel_{idx}_{j['id']}", use_container_width=True,
+                                 type="primary" if is_sel else "secondary"):
                         st.session_state.selected_job = j
                         st.session_state.match_result = None
-                        st.toast(f"Selected: {j['title']}", icon="🎯")
+                        st.toast(f"Selected: {j['title']} — go to Tab 3!", icon="🎯")
 
-                st.markdown("<hr style='border-color:#1E293B;margin:10px 0 20px;'>", unsafe_allow_html=True)
+                st.markdown("<hr style='border-color:#1E293B;margin:8px 0 18px;'>", unsafe_allow_html=True)
 
             if st.session_state.selected_job:
                 sel = st.session_state.selected_job
-                st.success(f"📌 **Selected Job:** {sel['title']} at **{sel['company']}** — go to Tab 3 to run match analysis.")
+                st.success(f"📌 **Selected:** {sel['title']} @ **{sel['company']}** — now go to Tab 3 ➜ Run AI Match Analysis.")
         else:
-            st.warning("⚠️ No matching jobs found right now. Try refreshing or paste a job description manually above.")
+            st.warning("⚠️ No matching jobs found right now. Try clicking **Refresh Job Listings** or paste a job description in the expander above.")
             st.info("💡 Make sure you've parsed your resume in Tab 1 first.")
 
 # ══════════════════════════════════════════════════════════════════════════════
