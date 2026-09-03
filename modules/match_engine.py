@@ -3,18 +3,7 @@ import json
 import os
 from google import genai
 from google.genai import types
-
-def get_api_key() -> str:
-    """Safely retrieve Gemini API Key from environment or Streamlit Secrets."""
-    key = os.getenv("GEMINI_API_KEY", "")
-    if not key:
-        try:
-            import streamlit as st
-            if hasattr(st, "secrets") and "GEMINI_API_KEY" in st.secrets:
-                key = st.secrets["GEMINI_API_KEY"]
-        except Exception:
-            pass
-    return str(key or "").strip()
+from modules.resume_parser import get_api_key
 
 TECH_KEYWORDS = [
     "python", "java", "c++", "c#", "javascript", "typescript", "ruby", "go", "golang", "rust", "php", "swift", "kotlin", "scala", "r", "matlab", "sql", "bash", "powershell",
@@ -25,7 +14,7 @@ TECH_KEYWORDS = [
 ]
 
 def extract_keywords_from_text(text: str) -> set:
-    """Extract recognized technical terms dynamically from any text block."""
+    """Extract technical keywords dynamically from text."""
     if not text or not isinstance(text, str):
         return set()
     text_lower = text.lower()
@@ -41,28 +30,38 @@ def extract_keywords_from_text(text: str) -> set:
                 found.add(kw.title())
     return found
 
-def calculate_dynamic_rule_based_match(parsed_resume: dict, job_description: str, job_title: str) -> dict:
-    """Dynamic NLP semantic comparison between candidate resume and target job."""
+def calculate_multi_factor_match(parsed_resume: dict, job: dict, search_query: str = "") -> dict:
+    """
+    Compute multi-factor match score combining:
+    1. Role Relevance Score (0-30 pts)
+    2. Resume Skill Match Score (0-40 pts)
+    3. Experience / Level Match Score (0-20 pts)
+    4. Domain Fit (0-10 pts)
+    """
     if not parsed_resume or not isinstance(parsed_resume, dict):
         parsed_resume = {}
-    job_description = str(job_description or "")
-    job_title = str(job_title or "Target Role")
+        
+    job_title = str(job.get("title", "") or "")
+    job_desc = str(job.get("description", "") or "")
+    candidate_level = str(parsed_resume.get("experience_level", "Internship / Fresher"))
     
+    # 1. Candidate's skills
     resume_skills_raw = set([s.strip().title() for s in parsed_resume.get("technical_skills", []) if isinstance(s, str) and s.strip()])
     resume_text = (str(parsed_resume.get("summary", "")) + " " + " ".join([str(x) for x in parsed_resume.get("work_experience", [])])).lower()
     resume_extracted = extract_keywords_from_text(resume_text)
-    candidate_all_skills = resume_skills_raw.union(resume_extracted)
-    
-    job_skills_extracted = extract_keywords_from_text(job_description)
+    candidate_skills = resume_skills_raw.union(resume_extracted)
+    candidate_skills_lower = {s.lower() for s in candidate_skills}
+
+    # 2. Job's extracted requirements
+    job_skills_extracted = extract_keywords_from_text(job_desc)
     if not job_skills_extracted:
         job_skills_extracted = extract_keywords_from_text(job_title)
         if not job_skills_extracted:
-            job_skills_extracted = {"Python", "Git", "REST API", "SQL", "Problem Solving"}
+            job_skills_extracted = {"Python", "Git", "REST API", "SQL"}
             
+    # 3. Dynamic Skill Intersect & Difference
     matching_skills = []
     missing_skills = []
-    
-    candidate_skills_lower = {s.lower() for s in candidate_all_skills}
     
     for j_skill in job_skills_extracted:
         j_lower = j_skill.lower()
@@ -73,62 +72,75 @@ def calculate_dynamic_rule_based_match(parsed_resume: dict, job_description: str
             
     matching_skills = sorted(list(set(matching_skills)))
     missing_skills = sorted(list(set(missing_skills)))
-    
+
+    # --- SCORE COMPONENTS ---
+    # Factor A: Skill Match Score (0 to 40 pts)
     total_reqs = len(job_skills_extracted)
-    match_count = len(matching_skills)
-    
-    raw_pct = (match_count / total_reqs) * 100 if total_reqs > 0 else 70.0
-    overall_score = int(min(max(raw_pct, 35), 96))
-    tech_score = int(min(max(overall_score + (5 if match_count > 2 else -5), 30), 98))
-    soft_score = int(min(max(overall_score + 2, 45), 92))
-    exp_score = int(min(max(overall_score - 3, 40), 95))
-    
+    skill_match_ratio = (len(matching_skills) / total_reqs) if total_reqs > 0 else 0.7
+    skill_pts = skill_match_ratio * 40.0
+
+    # Factor B: Role Relevance (0 to 30 pts)
+    q_lower = (search_query or job_title).lower()
+    t_lower = job_title.lower()
+    role_pts = 30.0 if any(word in t_lower for word in q_lower.split() if len(word) > 2) else 18.0
+
+    # Factor C: Experience Level Compatibility (0 to 20 pts)
+    level_pts = 20.0
+    if "intern" in candidate_level.lower() or "fresher" in candidate_level.lower():
+        if any(s in t_lower for s in ["senior", "sr.", "lead", "principal", "architect", "manager", "director"]):
+            level_pts = 0.0  # Massive penalty for senior roles
+        elif "intern" in t_lower or "junior" in t_lower or "entry" in t_lower or "trainee" in t_lower:
+            level_pts = 20.0
+        else:
+            level_pts = 14.0  # General non-senior role
+
+    # Factor D: Domain & Technology Fit (0 to 10 pts)
+    tech_pts = 10.0 if len(matching_skills) >= 2 else 5.0
+
+    # Final Combined Score Calculation
+    total_score = int(min(max(skill_pts + role_pts + level_pts + tech_pts, 35), 98))
+
+    # Candidate Name & Why it matches summary
     candidate_name = parsed_resume.get("candidate_name", "Candidate")
     
-    strengths = []
     if matching_skills:
-        strengths.append(f"Strong overlap in core target technologies: {', '.join(matching_skills[:4])}.")
+        why_matches = f"Your resume demonstrates strong technical proficiency in {', '.join(matching_skills[:3])} required for this role."
     else:
-        strengths.append("General technical experience outlined in profile.")
-    if candidate_all_skills:
-        strengths.append(f"Demonstrated technical toolkit including {', '.join(list(candidate_all_skills)[:4])}.")
-    strengths.append(f"Relevant background applicable to {job_title} duties.")
-    
-    improvements = []
-    if missing_skills:
-        improvements.append(f"Missing explicit key skills required for this role: {', '.join(missing_skills[:4])}.")
-        improvements.append(f"Highlight projects demonstrating hands-on experience with {missing_skills[0]} to boost ATS match.")
-    else:
-        improvements.append("Resume covers all core technical requirements. Consider adding quantified performance metrics.")
-    improvements.append(f"Tailor professional summary to directly reflect keywords from the '{job_title}' job post.")
-    
-    bullets = []
-    if matching_skills:
-        bullets.append(f"Engineered production-grade applications using {matching_skills[0]} and modern software architecture principles.")
-    else:
-        bullets.append(f"Architected scalable backend and frontend modules to optimize data workflows.")
-    if missing_skills:
-        bullets.append(f"Expanded technical domain knowledge by integrating {missing_skills[0]} and cloud infrastructure tools.")
-    bullets.append(f"Collaborated cross-functionally to deliver feature releases on schedule following Agile methodologies.")
-    
-    cover_letter = f"""Dear Hiring Manager,
+        why_matches = f"Your background aligns with the core requirements of this position."
 
-I am writing to express my strong enthusiasm for the {job_title} position. With my background in {', '.join(matching_skills[:3]) if matching_skills else 'software development'}, I am confident in my ability to deliver immediate value to your engineering team.
+    strengths = [
+        f"Demonstrated technical skills matching target posting: {', '.join(matching_skills[:4]) if matching_skills else 'General Software Engineering'}.",
+        f"Experience level compatible with {candidate_level} requirements."
+    ]
 
-In reviewing the requirements for the {job_title} role, I noted your team's focus on building scalable systems. My experience with {', '.join(list(candidate_all_skills)[:4]) if candidate_all_skills else 'modern tech stacks'} directly aligns with your technical roadmap. Additionally, I am actively expanding my expertise in {', '.join(missing_skills[:2]) if missing_skills else 'advanced system architecture'} to drive innovation across projects.
+    improvements = [
+        f"Consider adding key missing technologies: {', '.join(missing_skills[:3]) if missing_skills else 'Quantifiable metrics'}."
+    ]
 
-I would welcome the opportunity to discuss how my skill set and problem-solving approach fit your team's objectives. Thank you for your time and consideration.
+    bullets = [
+        f"Engineered scalable solutions utilizing {matching_skills[0] if matching_skills else 'Python'} to optimize application workflows.",
+        f"Collaborated cross-functionally following modern software engineering practices."
+    ]
+
+    cover_letter = f"""Dear Hiring Team,
+
+I am writing to express my strong enthusiasm for the {job_title} position at {job.get('company', 'your organization')}. With a solid foundation in {', '.join(matching_skills[:3]) if matching_skills else 'software development'}, I am eager to contribute to your team.
+
+My background aligns well with your role's focus. My experience with {', '.join(list(candidate_skills)[:4]) if candidate_skills else 'core programming stacks'} directly prepares me for these responsibilities.
+
+Thank you for your time and consideration. I look forward to discussing how I can add value to your team.
 
 Sincerely,
 {candidate_name}"""
 
     return {
-        "overall_score": overall_score,
-        "technical_score": tech_score,
-        "soft_skills_score": soft_score,
-        "experience_relevance_score": exp_score,
+        "overall_score": total_score,
+        "technical_score": int(min(max(total_score + 3, 30), 98)),
+        "soft_skills_score": int(min(max(total_score - 2, 40), 92)),
+        "experience_relevance_score": int(min(max(level_pts * 5, 30), 95)),
         "matching_skills": matching_skills,
         "missing_skills": missing_skills,
+        "why_matches": why_matches,
         "key_strengths": strengths,
         "improvement_areas": improvements,
         "tailored_resume_bullets": bullets,
@@ -136,16 +148,17 @@ Sincerely,
     }
 
 def analyze_resume_job_match(parsed_resume: dict, job_title: str, job_description: str, api_key: str = None) -> dict:
-    """Perform candidate-specific semantic match analysis using Gemini AI or dynamic NLP matching."""
+    """Analyze single job vs resume for detailed Tab 3 dashboard."""
+    dummy_job = {"title": job_title, "description": job_description, "company": "Target Company"}
     effective_key = api_key or get_api_key()
     
     if not effective_key:
-        return calculate_dynamic_rule_based_match(parsed_resume, job_description, job_title)
+        return calculate_multi_factor_match(parsed_resume, dummy_job, job_title)
         
     try:
         client = genai.Client(api_key=effective_key)
         prompt = f"""
-You are an expert HR AI Evaluator. Analyze the SPECIFIC candidate resume profile against the SPECIFIC job description provided below. Compute dynamic, accurate candidate-specific results.
+You are an expert HR AI Evaluator. Analyze the candidate resume profile against the job description below.
 
 Candidate Profile:
 {json.dumps(parsed_resume, indent=2)}
@@ -156,16 +169,17 @@ Job Description:
 
 Return JSON ONLY with exact keys:
 {{
-  "overall_score": 82,
-  "technical_score": 85,
+  "overall_score": 85,
+  "technical_score": 88,
   "soft_skills_score": 80,
-  "experience_relevance_score": 78,
-  "matching_skills": ["Skill1_Found_In_Both", "Skill2_Found_In_Both"],
-  "missing_skills": ["CriticalSkillInJobMissingFromResume1", "MissingSkill2"],
-  "key_strengths": ["Specific strength relative to this exact job 1", "Specific strength 2"],
-  "improvement_areas": ["Specific missing keyword gap 1", "Specific improvement 2"],
-  "tailored_resume_bullets": ["Action verb bullet incorporating job keywords 1", "Action verb bullet 2"],
-  "cover_letter": "A custom 3-paragraph cover letter tailored specifically for candidate and job"
+  "experience_relevance_score": 82,
+  "matching_skills": ["Skill1", "Skill2"],
+  "missing_skills": ["MissingSkill1", "MissingSkill2"],
+  "why_matches": "One concise sentence explaining why candidate fits this job",
+  "key_strengths": ["Strength 1", "Strength 2"],
+  "improvement_areas": ["Improvement 1", "Improvement 2"],
+  "tailored_resume_bullets": ["Action verb bullet 1", "Action verb bullet 2"],
+  "cover_letter": "A custom 3-paragraph cover letter"
 }}
 """
         response = client.models.generate_content(
@@ -175,12 +189,34 @@ Return JSON ONLY with exact keys:
                 response_mime_type="application/json"
             )
         )
-        
         if response and hasattr(response, "text") and response.text:
-            result = json.loads(response.text)
-            if isinstance(result, dict):
-                return result
+            res = json.loads(response.text)
+            if isinstance(res, dict):
+                return res
     except Exception as e:
-        print(f"Gemini API matching error: {e}. Falling back to dynamic NLP match.")
+        print(f"Gemini match error: {e}. Falling back to multi-factor match.")
         
-    return calculate_dynamic_rule_based_match(parsed_resume, job_description, job_title)
+    return calculate_multi_factor_match(parsed_resume, dummy_job, job_title)
+
+def rank_jobs_for_candidate(parsed_resume: dict, jobs: list, search_query: str = "") -> list:
+    """
+    Rank job listings by multi-factor combined score (Final Score descending).
+    Injects match_score, matching_skills, missing_skills, and why_matches directly into each job object.
+    """
+    if not jobs:
+        return []
+        
+    ranked = []
+    for job in jobs:
+        analysis = calculate_multi_factor_match(parsed_resume, job, search_query)
+        job_copy = dict(job)
+        job_copy["match_score"] = analysis["overall_score"]
+        job_copy["matching_skills"] = analysis["matching_skills"]
+        job_copy["missing_skills"] = analysis["missing_skills"]
+        job_copy["why_matches"] = analysis["why_matches"]
+        job_copy["match_analysis"] = analysis
+        ranked.append(job_copy)
+        
+    # Sort descending by match_score
+    ranked.sort(key=lambda x: x["match_score"], reverse=True)
+    return ranked
