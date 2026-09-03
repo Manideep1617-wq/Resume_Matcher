@@ -316,21 +316,23 @@ with tab2:
     st.markdown("---")
 
     # Paste Job URL / LinkedIn section
-    with st.expander("🌐 Option: Scrape directly from Job Posting URL or Raw Text"):
+    with st.expander("🌐 Option: Scrape directly from Job Posting URL or Raw Text", expanded=True if st.session_state.url_scrape_status else False):
         url_in = st.text_input("Paste Job Posting Web URL (e.g. LinkedIn, company career page)")
         if st.button("Fetch Job from URL"):
             if url_in:
                 with st.spinner("Scraping webpage content..."):
                     res = scrape_job_from_url(url_in)
                     if res.get("status") in ["blocked", "error"]:
-                        st.warning(f"⚠️ {res.get('message')}")
                         st.session_state.url_scrape_status = res.get("message")
                     else:
                         st.session_state.selected_job = res
                         st.session_state.url_scrape_status = None
                         st.success(f"Selected Job: {res['title']}")
             else:
-                st.warning("Please enter a valid URL.")
+                st.session_state.url_scrape_status = "Please enter a valid URL."
+                
+        if st.session_state.url_scrape_status:
+            st.warning(f"⚠️ {st.session_state.url_scrape_status}")
                 
         raw_job_text = st.text_area("Or Paste Target Job Description Text", height=140, placeholder="Paste job description text here...")
         if st.button("Set as Target Job"):
