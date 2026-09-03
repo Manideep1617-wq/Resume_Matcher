@@ -4,14 +4,17 @@ import re
 import json
 from urllib.parse import urlparse
 
-INVALID_DOMAINS = ["example.com", "placeholder.com", "test.com", "localhost", "127.0.0.1", "none", "#", ""]
-SENIOR_KEYWORDS = ["senior", "sr.", "sr ", "lead", "principal", "architect", "manager", "director", "head of", "vp ", "vice president"]
+INVALID_DOMAINS = ["example.com", "placeholder.com", "test.com", "localhost", "127.0.0.1"]
+EXECUTIVE_KEYWORDS = ["manager", "director", "head of", "vp ", "vice president", "chief", "executive", "recruiter", "accountant"]
+NON_TECH_KEYWORDS = ["sales", "office assistant", "content reviewer", "copywriter", "writer", "steward", "technician", "customer support", "help desk", "qa engineer", "devops"]
 
 def is_valid_url(url: str) -> bool:
     """Check if a URL is valid, non-placeholder, and properly formatted."""
     if not url or not isinstance(url, str):
         return False
     url_clean = url.strip().lower()
+    if url_clean in ["#", "", "none"]:
+        return False
     if any(domain in url_clean for domain in INVALID_DOMAINS):
         return False
     if not (url_clean.startswith("http://") or url_clean.startswith("https://")):
@@ -22,18 +25,18 @@ def is_valid_url(url: str) -> bool:
     except Exception:
         return False
 
-def is_senior_role(title: str) -> bool:
-    """Check if job title indicates a senior executive or leadership role."""
-    title_lower = (title or "").lower()
-    return any(word in title_lower for word in SENIOR_KEYWORDS)
+def is_executive_role(title: str) -> bool:
+    """Check if job title indicates an executive, managerial, or non-engineering role."""
+    t_lower = (title or "").lower()
+    return any(word in t_lower for word in EXECUTIVE_KEYWORDS + NON_TECH_KEYWORDS)
 
 def map_query_to_api_tags(query: str) -> list:
-    """Map user search query to valid API tags for maximum real job retrieval."""
+    """Map user search query to API tags for maximum active job retrieval."""
     q_lower = (query or "").lower().strip()
     tags = []
     
     if any(k in q_lower for k in ["machine learning", "ml", "ai", "artificial intelligence", "deep learning", "generative ai", "nlp", "llm"]):
-        tags.extend(["ai", "data", "python", "dev"])
+        tags.extend(["ai", "python", "data", "dev"])
     elif any(k in q_lower for k in ["data science", "data analyst", "data engineer"]):
         tags.extend(["data", "python", "sql"])
     elif any(k in q_lower for k in ["react", "frontend", "front-end", "javascript", "ui"]):
@@ -46,21 +49,21 @@ def map_query_to_api_tags(query: str) -> list:
         
     return list(dict.fromkeys(tags))
 
-def is_role_relevant(query: str, title: str, description: str, is_intern_candidate: bool = True) -> bool:
-    """Strict relevance check ensuring jobs match the searched role and level."""
+def is_role_relevant(query: str, title: str, description: str) -> bool:
+    """Check if a job posting strictly matches the searched role and technical domain."""
     q_lower = (query or "").lower().strip()
     t_lower = (title or "").lower()
     d_lower = (description or "").lower()
     
-    # 1. Reject explicit executive/senior titles for interns
-    if is_intern_candidate and is_senior_role(title):
+    # 1. Filter out management & non-technical sales/support/QA roles
+    if is_executive_role(title):
         return False
         
-    # 2. Match Category
+    # 2. Category matching
     # ML / AI / Data Science
     if any(k in q_lower for k in ["machine learning", "ml", "ai", "artificial intelligence", "data science", "deep learning", "generative ai", "python"]):
-        ml_keywords = ["machine learning", "ml", "ai", "artificial intelligence", "data science", "deep learning", "generative ai", "llm", "python", "nlp", "computer vision", "data"]
-        if not (any(k in t_lower for k in ml_keywords) or any(k in d_lower for k in ml_keywords[:6])):
+        ml_keywords = ["machine learning", "ml", "ai", "artificial intelligence", "data science", "deep learning", "generative ai", "llm", "python", "nlp", "computer vision", "data engineer", "data scientist", "ai engineer", "developer", "software"]
+        if not (any(k in t_lower for k in ml_keywords) or any(k in d_lower for k in ml_keywords[:7])):
             return False
         if ("frontend" in t_lower or "react" in t_lower or "designer" in t_lower) and not ("ml" in t_lower or "ai" in t_lower or "python" in t_lower or "data" in t_lower):
             return False
@@ -75,14 +78,14 @@ def is_role_relevant(query: str, title: str, description: str, is_intern_candida
             return False
         return True
 
-    # Fallback keyword match
-    query_tokens = [tok for tok in q_lower.split() if tok not in ["intern", "internship", "junior", "developer", "engineer"]]
+    # General query fallback
+    query_tokens = [tok for tok in q_lower.split() if tok not in ["intern", "internship", "junior", "developer", "engineer", "role"]]
     if query_tokens:
         return any(tok in t_lower or tok in d_lower for tok in query_tokens)
         
     return True
 
-def fetch_from_remotive(query: str, is_intern_candidate: bool = True) -> list:
+def fetch_from_remotive(query: str) -> list:
     """Fetch live jobs from Remotive API."""
     jobs = []
     api_tags = map_query_to_api_tags(query)
@@ -100,7 +103,7 @@ def fetch_from_remotive(query: str, is_intern_candidate: bool = True) -> list:
                     soup = BeautifulSoup(desc, "html.parser")
                     clean_desc = soup.get_text(separator="\n").strip()
                     
-                    if is_valid_url(job_url) and is_role_relevant(query, title, clean_desc, is_intern_candidate):
+                    if is_valid_url(job_url) and is_role_relevant(query, title, clean_desc):
                         jobs.append({
                             "id": f"remotive_{item.get('id')}",
                             "title": title,
@@ -117,7 +120,7 @@ def fetch_from_remotive(query: str, is_intern_candidate: bool = True) -> list:
             print(f"Remotive API error for tag {tag}: {e}")
     return jobs
 
-def fetch_from_jobicy(query: str, is_intern_candidate: bool = True) -> list:
+def fetch_from_jobicy(query: str) -> list:
     """Fetch live jobs from Jobicy API."""
     jobs = []
     api_tags = map_query_to_api_tags(query)
@@ -135,7 +138,7 @@ def fetch_from_jobicy(query: str, is_intern_candidate: bool = True) -> list:
                     soup = BeautifulSoup(desc, "html.parser")
                     clean_desc = soup.get_text(separator="\n").strip()
                     
-                    if is_valid_url(job_url) and is_role_relevant(query, title, clean_desc, is_intern_candidate):
+                    if is_valid_url(job_url) and is_role_relevant(query, title, clean_desc):
                         jobs.append({
                             "id": f"jobicy_{item.get('id')}",
                             "title": title,
@@ -152,7 +155,7 @@ def fetch_from_jobicy(query: str, is_intern_candidate: bool = True) -> list:
             print(f"Jobicy API error for tag {tag}: {e}")
     return jobs
 
-def fetch_from_arbeitnow(query: str, is_intern_candidate: bool = True) -> list:
+def fetch_from_arbeitnow(query: str) -> list:
     """Fetch live jobs from Arbeitnow API."""
     jobs = []
     try:
@@ -168,7 +171,7 @@ def fetch_from_arbeitnow(query: str, is_intern_candidate: bool = True) -> list:
                 soup = BeautifulSoup(desc, "html.parser")
                 clean_desc = soup.get_text(separator="\n").strip()
                 
-                if is_valid_url(job_url) and is_role_relevant(query, title, clean_desc, is_intern_candidate):
+                if is_valid_url(job_url) and is_role_relevant(query, title, clean_desc):
                     jobs.append({
                         "id": f"arbeit_{item.get('slug')}",
                         "title": title,
@@ -188,24 +191,15 @@ def fetch_from_arbeitnow(query: str, is_intern_candidate: bool = True) -> list:
 def search_live_jobs(query: str, location: str = "Remote", candidate_level: str = "Internship / Fresher") -> list:
     """
     Search active real-world job listings using verified job APIs.
-    Strictly filters out irrelevant roles, senior roles for interns, and non-working URLs.
+    Strictly filters out non-engineering/sales roles and non-working URLs.
     """
     query_clean = query.strip() if query else "Developer"
-    is_intern = any(w in candidate_level.lower() or w in query_clean.lower() for w in ["intern", "fresher", "junior", "student"])
     
     raw_jobs = []
-    raw_jobs.extend(fetch_from_remotive(query_clean, is_intern))
-    raw_jobs.extend(fetch_from_jobicy(query_clean, is_intern))
-    raw_jobs.extend(fetch_from_arbeitnow(query_clean, is_intern))
+    raw_jobs.extend(fetch_from_remotive(query_clean))
+    raw_jobs.extend(fetch_from_jobicy(query_clean))
+    raw_jobs.extend(fetch_from_arbeitnow(query_clean))
     
-    # If strictly intern filtering returned 0 results from live APIs today, relax senior filter to show entry-level developer roles
-    if not raw_jobs and is_intern:
-        raw_jobs.extend(fetch_from_remotive(query_clean, is_intern_candidate=False))
-        raw_jobs.extend(fetch_from_jobicy(query_clean, is_intern_candidate=False))
-        raw_jobs.extend(fetch_from_arbeitnow(query_clean, is_intern_candidate=False))
-        # Filter out explicit Senior/Lead titles
-        raw_jobs = [j for j in raw_jobs if not is_senior_role(j["title"])]
-
     seen = set()
     unique_jobs = []
     for j in raw_jobs:
